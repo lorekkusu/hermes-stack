@@ -22,6 +22,7 @@ services:
 
   camofox:
     image: ghcr.io/lorekkusu/camofox:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "9377:9377"
