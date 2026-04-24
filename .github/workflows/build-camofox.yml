@@ -1,0 +1,116 @@
+name: Build Camofox
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Camofox version tag. Leave blank to use upstream Makefile VERSION.
+        required: false
+        type: string
+      release:
+        description: Camoufox release. Leave blank to use upstream Makefile RELEASE.
+        required: false
+        type: string
+      arch:
+        description: Build architecture.
+        required: true
+        default: x86_64
+        type: choice
+        options:
+          - x86_64
+          - aarch64
+  schedule:
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: camofox-${{ github.event.inputs.version || 'upstream' }}-${{ github.event.inputs.arch || 'x86_64' }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: jo-inc/camofox-browser
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout camofox-browser
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: master
+          path: camofox-browser
+
+      - name: Resolve build settings
+        id: settings
+        shell: bash
+        working-directory: camofox-browser
+        run: |
+          input_version="${{ github.event.inputs.version }}"
+          input_release="${{ github.event.inputs.release }}"
+          input_arch="${{ github.event.inputs.arch }}"
+
+          version="${input_version:-$(grep '^VERSION' Makefile | cut -d '=' -f 2 | xargs)}"
+          release="${input_release:-$(grep '^RELEASE' Makefile | cut -d '=' -f 2 | xargs)}"
+          arch="${input_arch:-x86_64}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/camofox"
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
+          echo "arch=${arch}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "local_image=camofox-browser:${version}-${arch}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check existing image
+        id: existing
+        shell: bash
+        run: |
+          if docker manifest inspect "${{ steps.settings.outputs.image }}:${{ steps.settings.outputs.version }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image
+        if: steps.existing.outputs.exists != 'true'
+        working-directory: camofox-browser
+        run: |
+          make build \
+            VERSION="${{ steps.settings.outputs.version }}" \
+            RELEASE="${{ steps.settings.outputs.release }}" \
+            ARCH="${{ steps.settings.outputs.arch }}"
+
+      - name: Push version and latest tags
+        if: steps.existing.outputs.exists != 'true'
+        shell: bash
+        run: |
+          docker tag "${{ steps.settings.outputs.local_image }}" "${{ steps.settings.outputs.image }}:${{ steps.settings.outputs.version }}"
+          docker tag "${{ steps.settings.outputs.local_image }}" "${{ steps.settings.outputs.image }}:latest"
+
+          docker push "${{ steps.settings.outputs.image }}:${{ steps.settings.outputs.version }}"
+          docker push "${{ steps.settings.outputs.image }}:latest"
+
+      - name: Refresh latest tag from existing version
+        if: steps.existing.outputs.exists == 'true'
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ steps.settings.outputs.image }}:latest" \
+            "${{ steps.settings.outputs.image }}:${{ steps.settings.outputs.version }}"
+
+      - name: Summary
+        run: |
+          echo "Image: ${{ steps.settings.outputs.image }}"
+          echo "Version tag: ${{ steps.settings.outputs.version }}"
+          echo "Latest tag: latest"
+          echo "Already existed: ${{ steps.existing.outputs.exists }}"

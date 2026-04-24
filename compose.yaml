@@ -1,0 +1,35 @@
+name: hermes-stack
+
+volumes:
+  hindsight-database:
+  camofox-profiles:
+  camofox-cookies:
+
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_LLM_PROVIDER}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_LLM_MODEL}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_KEY}
+    volumes:
+      - hindsight-database:/home/hindsight/.pg0
+
+  camofox:
+    image: ghcr.io/lorekkusu/camofox:latest
+    restart: unless-stopped
+    ports:
+      - "9377:9377"
+      - "5900:5900"
+      - "6080:6080"
+    environment:
+      ENABLE_VNC: ${CAMOFOX_ENABLE_VNC}
+      VNC_PASSWORD: ${CAMOFOX_VNC_PASSWORD}
+    volumes:
+      - camofox-profiles:/root/.camofox/profiles
+      - camofox-cookies:/root/.camofox/cookies:ro
